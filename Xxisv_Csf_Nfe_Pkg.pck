@@ -9849,18 +9849,47 @@ CREATE OR REPLACE Package Body Xxisv_Csf_Nfe_Pkg As
        Group By Aux.Aliq_Mun;
     R7 c_Ibsmun%Rowtype;
     --
+    /*Diferimento do IBS-UF/CBS (CST 515) - PERCENT_DIFER e VL_IMP_DIFER_UF -- fonte: EBS_RT_Tax_Mapping_ISV.xlsx (aba Deferred)*/
     Cursor c_PercentdiferIBSUF Is
       Select (Arvt.Global_Attribute14 * 10000) Percent_Difer
+            ,(Nvl(Zl.Cal_Tax_Amt, Zl.Tax_Amt) * 100) Vl_Imp_Difer_Uf
         From Zx_Lines       Zl
             ,Ar_Vat_Tax_All Arvt
        Where 1 = 1
          And Zl.Tax_Rate_Id = Arvt.Vat_Tax_Id
          And Arvt.Global_Attribute2 = 'Y'
-         And Arvt.Global_Attribute10 In ('IBSUF')
-         And Nvl(null, Arvt.Global_Attribute19) = '515'
+         And Arvt.Global_Attribute10 =
+             Case
+               When p_Cod_Imposto = 28 Then
+                'IBSUF'
+               When p_Cod_Imposto = 29 Then
+                'CBS'
+             End
+         And Arvt.Global_Attribute19 = '515'
          And Zl.Trx_Line_Id = p_Customer_Trx_Line_Id
-         And p_Cod_Imposto = 28;
+         And p_Cod_Imposto In (28, 29);
     R8 c_PercentdiferIBSUF%Rowtype;
+    --
+    /*Reducao de aliquota do IBS-UF/CBS (CST 200) - PER_REDALIQ_IBS_CBS e ALIQ_EFET_IBS_CBS -- fonte: EBS_RT_Tax_Mapping_ISV.xlsx (aba Tax Rate Reduction)*/
+    Cursor c_RedaliqIbsCbs Is
+      Select (Arvt.Global_Attribute14 * 10000) Per_Redaliq_Ibs_Cbs
+            ,(Abs(Zl.Tax_Rate) * 10000) Aliq_Efet_Ibs_Cbs
+        From Zx_Lines       Zl
+            ,Ar_Vat_Tax_All Arvt
+       Where 1 = 1
+         And Zl.Tax_Rate_Id = Arvt.Vat_Tax_Id
+         And Arvt.Global_Attribute2 = 'Y'
+         And Arvt.Global_Attribute10 =
+             Case
+               When p_Cod_Imposto = 28 Then
+                'IBSUF'
+               When p_Cod_Imposto = 29 Then
+                'CBS'
+             End
+         And Arvt.Global_Attribute19 = '200'
+         And Zl.Trx_Line_Id = p_Customer_Trx_Line_Id
+         And p_Cod_Imposto In (28, 29);
+    R9 c_RedaliqIbsCbs%Rowtype;
     --
   Begin
     Open C1;
@@ -10947,6 +10976,7 @@ CREATE OR REPLACE Package Body Xxisv_Csf_Nfe_Pkg As
     End If;
     --
     If p_Rvcii.Cod_St In ('515')
+       And p_Cod_Imposto In (28, 29)
     Then
       Open c_PercentdiferIBSUF;
       Loop
@@ -10980,7 +11010,7 @@ CREATE OR REPLACE Package Body Xxisv_Csf_Nfe_Pkg As
             ,p_Rvcii.Cod_Imposto
             ,p_Rvcii.Dm_Tipo
             ,'PERCENT_DIFER'
-            ,R5.Percent_Difer);
+            ,R8.Percent_Difer);
         Exception
           When Dup_Val_On_Index Then
             Null;
@@ -11002,8 +11032,165 @@ CREATE OR REPLACE Package Body Xxisv_Csf_Nfe_Pkg As
           --
         End;
         ---
+        Begin
+          Insert Into Vw_Csf_Imp_Itemnf_Ff
+            (Cpf_Cnpj_Emit
+            ,Dm_Ind_Emit
+            ,Dm_Ind_Oper
+            ,Cod_Part
+            ,Cod_Mod
+            ,Serie
+            ,Nro_Nf
+            ,Nro_Item
+            ,Cod_Imposto
+            ,Dm_Tipo
+            ,Atributo
+            ,Valor)
+          Values
+            (p_Rvcii.Cpf_Cnpj_Emit
+            ,p_Rvcii.Dm_Ind_Emit
+            ,p_Rvcii.Dm_Ind_Oper
+            ,p_Rvcii.Cod_Part
+            ,p_Rvcii.Cod_Mod
+            ,p_Rvcii.Serie
+            ,p_Rvcii.Nro_Nf
+            ,p_Rvcii.Nro_Item
+            ,p_Rvcii.Cod_Imposto
+            ,p_Rvcii.Dm_Tipo
+            ,'VL_IMP_DIFER_UF'
+            ,R8.Vl_Imp_Difer_Uf);
+        Exception
+          When Dup_Val_On_Index Then
+            Null;
+          When Others Then
+            --
+            g_Retcode   := 1;
+            g_Erro      := Nvl(g_Erro, 0) + 1;
+            l_Desc_Erro := 'Vw_Csf_Imp_Itemnf_Ff_p (VL_IMP_DIFER_UF) - ' ||
+                           'Cpf_Cnpj_Emit: ' || p_Rvcii.Cpf_Cnpj_Emit ||
+                           ', Dm_Ind_Emit: ' || p_Rvcii.Dm_Ind_Emit ||
+                           ', Cod_Mod: ' || p_Rvcii.Cod_Mod || ', Serie: ' ||
+                           p_Rvcii.Serie || ', Nro_Nf: ' || p_Rvcii.Nro_Nf ||
+                           ', Nro_Item: ' || p_Rvcii.Nro_Item || ', Erro: ' ||
+                           Sqlerrm;
+            g_Erro_Msg  := l_Desc_Erro;
+            --
+            Fnd_File.Put_Line(Fnd_File.Log, l_Desc_Erro);
+            --
+          --
+        End;
+        ---
       End Loop;
       Close c_PercentdiferIBSUF;
+    End If;
+    --
+    If p_Rvcii.Cod_St In ('200')
+       And p_Cod_Imposto In (28, 29)
+    Then
+      Open c_RedaliqIbsCbs;
+      Loop
+        Fetch c_RedaliqIbsCbs
+          Into R9;
+        Exit When c_RedaliqIbsCbs%Notfound;
+        ---
+        Begin
+          Insert Into Vw_Csf_Imp_Itemnf_Ff
+            (Cpf_Cnpj_Emit
+            ,Dm_Ind_Emit
+            ,Dm_Ind_Oper
+            ,Cod_Part
+            ,Cod_Mod
+            ,Serie
+            ,Nro_Nf
+            ,Nro_Item
+            ,Cod_Imposto
+            ,Dm_Tipo
+            ,Atributo
+            ,Valor)
+          Values
+            (p_Rvcii.Cpf_Cnpj_Emit
+            ,p_Rvcii.Dm_Ind_Emit
+            ,p_Rvcii.Dm_Ind_Oper
+            ,p_Rvcii.Cod_Part
+            ,p_Rvcii.Cod_Mod
+            ,p_Rvcii.Serie
+            ,p_Rvcii.Nro_Nf
+            ,p_Rvcii.Nro_Item
+            ,p_Rvcii.Cod_Imposto
+            ,p_Rvcii.Dm_Tipo
+            ,'PER_REDALIQ_IBS_CBS'
+            ,R9.Per_Redaliq_Ibs_Cbs);
+        Exception
+          When Dup_Val_On_Index Then
+            Null;
+          When Others Then
+            --
+            g_Retcode   := 1;
+            g_Erro      := Nvl(g_Erro, 0) + 1;
+            l_Desc_Erro := 'Vw_Csf_Imp_Itemnf_Ff_p (PER_REDALIQ_IBS_CBS) - ' ||
+                           'Cpf_Cnpj_Emit: ' || p_Rvcii.Cpf_Cnpj_Emit ||
+                           ', Dm_Ind_Emit: ' || p_Rvcii.Dm_Ind_Emit ||
+                           ', Cod_Mod: ' || p_Rvcii.Cod_Mod || ', Serie: ' ||
+                           p_Rvcii.Serie || ', Nro_Nf: ' || p_Rvcii.Nro_Nf ||
+                           ', Nro_Item: ' || p_Rvcii.Nro_Item || ', Erro: ' ||
+                           Sqlerrm;
+            g_Erro_Msg  := l_Desc_Erro;
+            --
+            Fnd_File.Put_Line(Fnd_File.Log, l_Desc_Erro);
+            --
+          --
+        End;
+        ---
+        Begin
+          Insert Into Vw_Csf_Imp_Itemnf_Ff
+            (Cpf_Cnpj_Emit
+            ,Dm_Ind_Emit
+            ,Dm_Ind_Oper
+            ,Cod_Part
+            ,Cod_Mod
+            ,Serie
+            ,Nro_Nf
+            ,Nro_Item
+            ,Cod_Imposto
+            ,Dm_Tipo
+            ,Atributo
+            ,Valor)
+          Values
+            (p_Rvcii.Cpf_Cnpj_Emit
+            ,p_Rvcii.Dm_Ind_Emit
+            ,p_Rvcii.Dm_Ind_Oper
+            ,p_Rvcii.Cod_Part
+            ,p_Rvcii.Cod_Mod
+            ,p_Rvcii.Serie
+            ,p_Rvcii.Nro_Nf
+            ,p_Rvcii.Nro_Item
+            ,p_Rvcii.Cod_Imposto
+            ,p_Rvcii.Dm_Tipo
+            ,'ALIQ_EFET_IBS_CBS'
+            ,R9.Aliq_Efet_Ibs_Cbs);
+        Exception
+          When Dup_Val_On_Index Then
+            Null;
+          When Others Then
+            --
+            g_Retcode   := 1;
+            g_Erro      := Nvl(g_Erro, 0) + 1;
+            l_Desc_Erro := 'Vw_Csf_Imp_Itemnf_Ff_p (ALIQ_EFET_IBS_CBS) - ' ||
+                           'Cpf_Cnpj_Emit: ' || p_Rvcii.Cpf_Cnpj_Emit ||
+                           ', Dm_Ind_Emit: ' || p_Rvcii.Dm_Ind_Emit ||
+                           ', Cod_Mod: ' || p_Rvcii.Cod_Mod || ', Serie: ' ||
+                           p_Rvcii.Serie || ', Nro_Nf: ' || p_Rvcii.Nro_Nf ||
+                           ', Nro_Item: ' || p_Rvcii.Nro_Item || ', Erro: ' ||
+                           Sqlerrm;
+            g_Erro_Msg  := l_Desc_Erro;
+            --
+            Fnd_File.Put_Line(Fnd_File.Log, l_Desc_Erro);
+            --
+          --
+        End;
+        ---
+      End Loop;
+      Close c_RedaliqIbsCbs;
     End If;
     --
   Exception
