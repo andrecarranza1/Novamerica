@@ -9849,7 +9849,7 @@ CREATE OR REPLACE Package Body Xxisv_Csf_Nfe_Pkg As
        Group By Aux.Aliq_Mun;
     R7 c_Ibsmun%Rowtype;
     --
-    /*Diferimento do IBS-UF/CBS (CST 515) - PERCENT_DIFER e VL_IMP_DIFER_UF -- fonte: EBS_RT_Tax_Mapping_ISV.xlsx (aba Deferred)*/
+    /*Diferimento do IBS-UF (CST 515) - PERCENT_DIFER e VL_IMP_DIFER_UF -- fonte: EBS_RT_Tax_Mapping_ISV.xlsx (aba Deferred). Atributo especifico de IBS-UF (Cod_Imposto=28), nao se aplica a CBS.*/
     Cursor c_PercentdiferIBSUF Is
       Select (Arvt.Global_Attribute14 * 10000) Percent_Difer
             ,(Nvl(Zl.Cal_Tax_Amt, Zl.Tax_Amt) * 100) Vl_Imp_Difer_Uf
@@ -9858,16 +9858,10 @@ CREATE OR REPLACE Package Body Xxisv_Csf_Nfe_Pkg As
        Where 1 = 1
          And Zl.Tax_Rate_Id = Arvt.Vat_Tax_Id
          And Arvt.Global_Attribute2 = 'Y'
-         And Arvt.Global_Attribute10 =
-             Case
-               When p_Cod_Imposto = 28 Then
-                'IBSUF'
-               When p_Cod_Imposto = 29 Then
-                'CBS'
-             End
-         And Arvt.Global_Attribute19 = '515'
+         And Arvt.Global_Attribute10 = 'IBSUF'
+         And Nvl(p_Rvcii.Cod_St, Arvt.Global_Attribute19) = '515'
          And Zl.Trx_Line_Id = p_Customer_Trx_Line_Id
-         And p_Cod_Imposto In (28, 29);
+         And p_Cod_Imposto = 28;
     R8 c_PercentdiferIBSUF%Rowtype;
     --
     /*Reducao de aliquota do IBS-UF/CBS (CST 200) - PER_REDALIQ_IBS_CBS e ALIQ_EFET_IBS_CBS -- fonte: EBS_RT_Tax_Mapping_ISV.xlsx (aba Tax Rate Reduction)*/
@@ -9886,7 +9880,7 @@ CREATE OR REPLACE Package Body Xxisv_Csf_Nfe_Pkg As
                When p_Cod_Imposto = 29 Then
                 'CBS'
              End
-         And Arvt.Global_Attribute19 = '200'
+         And Nvl(p_Rvcii.Cod_St, Arvt.Global_Attribute19) = '200'
          And Zl.Trx_Line_Id = p_Customer_Trx_Line_Id
          And p_Cod_Imposto In (28, 29);
     R9 c_RedaliqIbsCbs%Rowtype;
@@ -10976,7 +10970,7 @@ CREATE OR REPLACE Package Body Xxisv_Csf_Nfe_Pkg As
     End If;
     --
     If p_Rvcii.Cod_St In ('515')
-       And p_Cod_Imposto In (28, 29)
+       And p_Cod_Imposto = 28
     Then
       Open c_PercentdiferIBSUF;
       Loop
