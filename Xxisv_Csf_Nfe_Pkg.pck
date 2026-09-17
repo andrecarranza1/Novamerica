@@ -9864,7 +9864,7 @@ CREATE OR REPLACE Package Body Xxisv_Csf_Nfe_Pkg As
          And p_Cod_Imposto = 28;
     R8 c_PercentdiferIBSUF%Rowtype;
     --
-    /*Reducao de aliquota do IBS-UF/CBS (CST 200) - PER_REDALIQ_IBS_CBS e ALIQ_EFET_IBS_CBS -- fonte: EBS_RT_Tax_Mapping_ISV.xlsx (aba Tax Rate Reduction)*/
+    /*Reducao de aliquota (CST 200) e reducao com diferimento (CST 515) do IBS-UF/CBS - PER_REDALIQ_IBS_CBS e ALIQ_EFET_IBS_CBS -- fonte: EBS_RT_Tax_Mapping_ISV.xlsx (aba Tax Rate Reduction)*/
     Cursor c_RedaliqIbsCbs Is
       Select (Arvt.Global_Attribute14 * 10000) Per_Redaliq_Ibs_Cbs
             ,(Abs(Zl.Tax_Rate) * 10000) Aliq_Efet_Ibs_Cbs
@@ -9880,7 +9880,7 @@ CREATE OR REPLACE Package Body Xxisv_Csf_Nfe_Pkg As
                When p_Cod_Imposto = 29 Then
                 'CBS'
              End
-         And Nvl(p_Rvcii.Cod_St, Arvt.Global_Attribute19) = '200'
+         And Nvl(p_Rvcii.Cod_St, Arvt.Global_Attribute19) In ('200', '515')
          And Zl.Trx_Line_Id = p_Customer_Trx_Line_Id
          And p_Cod_Imposto In (28, 29);
     R9 c_RedaliqIbsCbs%Rowtype;
@@ -11078,7 +11078,7 @@ CREATE OR REPLACE Package Body Xxisv_Csf_Nfe_Pkg As
       Close c_PercentdiferIBSUF;
     End If;
     --
-    If p_Rvcii.Cod_St In ('200')
+    If p_Rvcii.Cod_St In ('200', '515')
        And p_Cod_Imposto In (28, 29)
     Then
       Open c_RedaliqIbsCbs;
