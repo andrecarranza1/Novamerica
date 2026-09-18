@@ -6685,16 +6685,13 @@ Create Or Replace Package Body Xxisv_Csf_Nfe_Pkg As
                              And Abs(Nvl(Zl.Cal_Tax_Amt, Zl.Tax_Amt)) > 0 Then
                          Zl.Taxable_Amt
                         When Arvt.Global_Attribute10 Like 'IBS%'
-                             -- And Abs(Nvl(Zl.Cal_Tax_Amt, Zl.Tax_Amt)) > 0
-                             Then
+                             And Abs(Nvl(Zl.Cal_Tax_Amt, Zl.Tax_Amt)) > 0 Then
                          Zl.Taxable_Amt
                         When Arvt.Global_Attribute10 = 'CBS'
-                             -- And Abs(Nvl(Zl.Cal_Tax_Amt, Zl.Tax_Amt)) > 0
-                             Then
+                             And Abs(Nvl(Zl.Cal_Tax_Amt, Zl.Tax_Amt)) > 0 Then
                          Zl.Taxable_Amt
                         When Arvt.Global_Attribute10 = 'IS'
-                             -- And Abs(Nvl(Zl.Cal_Tax_Amt, Zl.Tax_Amt)) > 0
-                             Then
+                             And Abs(Nvl(Zl.Cal_Tax_Amt, Zl.Tax_Amt)) > 0 Then
                          Zl.Taxable_Amt
                         Else
                          0
@@ -6889,16 +6886,13 @@ Create Or Replace Package Body Xxisv_Csf_Nfe_Pkg As
                              And Abs(Nvl(Zl.Cal_Tax_Amt, Zl.Tax_Amt)) > 0 Then
                          Zl.Taxable_Amt
                         When Arvt.Global_Attribute10 Like 'IBS%'
-                             -- And Abs(Nvl(Zl.Cal_Tax_Amt, Zl.Tax_Amt)) > 0
-                             Then
+                             And Abs(Nvl(Zl.Cal_Tax_Amt, Zl.Tax_Amt)) > 0 Then
                          Zl.Taxable_Amt
                         When Arvt.Global_Attribute10 = 'CBS'
-                             -- And Abs(Nvl(Zl.Cal_Tax_Amt, Zl.Tax_Amt)) > 0
-                             Then
+                             And Abs(Nvl(Zl.Cal_Tax_Amt, Zl.Tax_Amt)) > 0 Then
                          Zl.Taxable_Amt
                         When Arvt.Global_Attribute10 = 'IS'
-                             -- And Abs(Nvl(Zl.Cal_Tax_Amt, Zl.Tax_Amt)) > 0
-                             Then
+                             And Abs(Nvl(Zl.Cal_Tax_Amt, Zl.Tax_Amt)) > 0 Then
                          Zl.Taxable_Amt
                         Else
                          0
@@ -7099,16 +7093,13 @@ Create Or Replace Package Body Xxisv_Csf_Nfe_Pkg As
                              And Abs(Nvl(Zl.Cal_Tax_Amt, Zl.Tax_Amt)) > 0 Then
                          Zl.Taxable_Amt
                         When Arvt.Global_Attribute10 Like 'IBS%'
-                             -- And Abs(Nvl(Zl.Cal_Tax_Amt, Zl.Tax_Amt)) > 0
-                             Then
+                             And Abs(Nvl(Zl.Cal_Tax_Amt, Zl.Tax_Amt)) > 0 Then
                          Zl.Taxable_Amt
                         When Arvt.Global_Attribute10 = 'CBS'
-                             -- And Abs(Nvl(Zl.Cal_Tax_Amt, Zl.Tax_Amt)) > 0
-                             Then
+                             And Abs(Nvl(Zl.Cal_Tax_Amt, Zl.Tax_Amt)) > 0 Then
                          Zl.Taxable_Amt
                         When Arvt.Global_Attribute10 = 'IS'
-                             -- And Abs(Nvl(Zl.Cal_Tax_Amt, Zl.Tax_Amt)) > 0
-                             Then
+                             And Abs(Nvl(Zl.Cal_Tax_Amt, Zl.Tax_Amt)) > 0 Then
                          Zl.Taxable_Amt
                         Else
                          0
