@@ -7558,7 +7558,9 @@ Create Or Replace Package Body Xxisv_Csf_Nfe_Pkg As
         l_Rvcii.Vl_Bc_St_Dest       := R1.Vl_Bc_St_Dest;
         l_Rvcii.Vl_Icmsst_Dest      := R1.Vl_Icmsst_Dest;
         --
-        /*Valor final do IBS-UF/CBS ja liquido do diferimento (Reforma Tributaria) -- fonte: Query_final.sql*/
+        /*Aliquota aplicavel e valor final do IBS-UF/CBS (Reforma Tributaria) -- fonte: Query_final.sql
+          Aliq_Apli: para CST 200/510/515 usa Arvt.Global_Attribute13 (aliquota nominal), nao mais sempre Abs(Zl.Tax_Rate)
+          Vl_Imp_Trib: valor final, ja liquido do diferimento*/
         If R1.Cod_Imposto In (28, 29)
         Then
           Open c_Ibscbs_Calculo;
@@ -7567,15 +7569,29 @@ Create Or Replace Package Body Xxisv_Csf_Nfe_Pkg As
           Close c_Ibscbs_Calculo;
           --
           If R1.Cod_Imposto = 28
-             And R5.Vl_Imp_Trib_Ibsuf Is Not Null
           Then
-            R1.Vl_Imp_Trib      := R5.Vl_Imp_Trib_Ibsuf;
-            l_Rvcii.Vl_Imp_Trib := R1.Vl_Imp_Trib;
+            If R5.Aliq_Apli_Ibsuf Is Not Null
+            Then
+              R1.Aliq_Apli      := R5.Aliq_Apli_Ibsuf;
+              l_Rvcii.Aliq_Apli := R1.Aliq_Apli;
+            End If;
+            If R5.Vl_Imp_Trib_Ibsuf Is Not Null
+            Then
+              R1.Vl_Imp_Trib      := R5.Vl_Imp_Trib_Ibsuf;
+              l_Rvcii.Vl_Imp_Trib := R1.Vl_Imp_Trib;
+            End If;
           Elsif R1.Cod_Imposto = 29
-                And R5.Vl_Imp_Trib_Cbs Is Not Null
           Then
-            R1.Vl_Imp_Trib      := R5.Vl_Imp_Trib_Cbs;
-            l_Rvcii.Vl_Imp_Trib := R1.Vl_Imp_Trib;
+            If R5.Aliq_Apli_Cbs Is Not Null
+            Then
+              R1.Aliq_Apli      := R5.Aliq_Apli_Cbs;
+              l_Rvcii.Aliq_Apli := R1.Aliq_Apli;
+            End If;
+            If R5.Vl_Imp_Trib_Cbs Is Not Null
+            Then
+              R1.Vl_Imp_Trib      := R5.Vl_Imp_Trib_Cbs;
+              l_Rvcii.Vl_Imp_Trib := R1.Vl_Imp_Trib;
+            End If;
           End If;
         End If;
         --
