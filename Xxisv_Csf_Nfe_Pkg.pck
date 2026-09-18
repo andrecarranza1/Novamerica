@@ -3171,7 +3171,14 @@ Create Or Replace Package Body Xxisv_Csf_Nfe_Pkg As
     R11 c_Vl_Imp_Is%Rowtype;
     --
     Cursor c_Vl_Bc_Ibs_Cbs Is
-      Select Distinct Abs(t.Taxable_Amt) As Vl_Bc_Ibs_Cbs
+      Select --Distinct Abs(t.Taxable_Amt) As Vl_Bc_Ibs_Cbs -- Carranza 18/09/2026
+             Distinct
+             Case
+               When t.Tax_Amount > 0 Then
+                Abs(t.Taxable_Amt)
+               Else
+                0
+             End As Vl_Bc_Ibs_Cbs
         From Cll_F255_Ar_Total_Inv_Taxes_v t
        Where t.Customer_Trx_Id = p_Customer_Trx_Id
          And t.Arvt_Global_Attribute2 = 'Y'
