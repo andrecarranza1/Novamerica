@@ -1,4 +1,4 @@
-CREATE OR REPLACE Package Xxisv_Csf_Nfe_Pkg Authid Current_User As
+Create Or Replace Package Xxisv_Csf_Nfe_Pkg Authid Current_User As
 
   --
   -- +=================================================================+
@@ -459,7 +459,7 @@ CREATE OR REPLACE Package Xxisv_Csf_Nfe_Pkg Authid Current_User As
 --
 End Xxisv_Csf_Nfe_Pkg;
 /
-CREATE OR REPLACE Package Body Xxisv_Csf_Nfe_Pkg As
+Create Or Replace Package Body Xxisv_Csf_Nfe_Pkg As
 
   --
   -- +=================================================================+
@@ -7400,6 +7400,129 @@ CREATE OR REPLACE Package Body Xxisv_Csf_Nfe_Pkg As
          And Cfil.Invoice_Line_Id = Rctla.Interface_Line_Attribute4;
     R4 C4%Rowtype;
     --
+    /*Calculo unificado do IBS Municipal, IBS Estadual e CBS (Reforma Tributaria): CST/ClassTrib, base de calculo, aliquota aplicavel, reducao de aliquota e diferimento (identificacao, percentual e valor) e valor final de cada imposto ja liquido do diferimento -- fonte: Query_final.sql*/
+    Cursor c_Ibscbs_Calculo Is
+      With Item As
+       (Select Rctl.Customer_Trx_Line_Id
+              ,Rctl.Customer_Trx_Id
+              ,Rctl.Org_Id
+              ,Rctt.Global_Attribute7 As Rctt_Global_Attribute7
+              ,Rctt.Global_Attribute8 As Rctt_Global_Attribute8
+          From Ra_Customer_Trx_Lines_All Rctl
+          Join Ra_Customer_Trx_All Rcta
+            On Rcta.Customer_Trx_Id = Rctl.Customer_Trx_Id
+           And Rcta.Org_Id = Rctl.Org_Id
+          Join Ra_Cust_Trx_Types_All Rctt
+            On Rctt.Cust_Trx_Type_Id = Rcta.Cust_Trx_Type_Id
+           And Rctt.Org_Id = Rcta.Org_Id
+         Where Rctl.Customer_Trx_Line_Id = p_Customer_Trx_Line_Id
+           And Rctl.Line_Type = 'LINE')
+      ,Tax_Base As
+       (Select Zl.Trx_Line_Id As Link_To_Cust_Trx_Line_Id
+              ,Zl.Trx_Id As Customer_Trx_Id
+              ,Arvt.Global_Attribute10 As Arvt_Global_Attribute10
+              ,Arvt.Global_Attribute13 As Arvt_Global_Attribute13
+              ,Arvt.Global_Attribute14 As Arvt_Global_Attribute14
+              ,Arvt.Global_Attribute20 As Arvt_Global_Attribute20
+              ,Zl.Global_Attribute13 As Zl_Global_Attribute13
+              ,Zl.Global_Attribute14 As Zl_Global_Attribute14
+              ,Zl.Taxable_Amt
+              ,Zl.Tax_Rate
+              ,Abs(Nvl(Zl.Cal_Tax_Amt, Zl.Tax_Amt)) As Tax_Amount
+              ,I.Rctt_Global_Attribute7
+              ,I.Rctt_Global_Attribute8
+              ,Coalesce(Zl.Global_Attribute13
+                       ,Case
+                          When Upper(Arvt.Global_Attribute10) Like '%CBS%' Then
+                           Substr(I.Rctt_Global_Attribute7, 1, 3)
+                          When Upper(Arvt.Global_Attribute10) Like '%IBS%' Then
+                           Substr(I.Rctt_Global_Attribute8, 1, 3)
+                        End) As Cst_Resolvido
+              ,Coalesce(Zl.Global_Attribute14
+                       ,Case
+                          When Upper(Arvt.Global_Attribute10) Like '%CBS%' Then
+                           I.Rctt_Global_Attribute7
+                          When Upper(Arvt.Global_Attribute10) Like '%IBS%' Then
+                           I.Rctt_Global_Attribute8
+                        End) As Cclass_Trib_Resolvida
+          From Zx_Lines Zl
+          Join Ar_Vat_Tax_All Arvt
+            On Arvt.Vat_Tax_Id = Zl.Tax_Rate_Id
+           And Arvt.Org_Id = Zl.Internal_Organization_Id
+          Join Item I
+            On I.Customer_Trx_Line_Id = Zl.Trx_Line_Id
+           And I.Customer_Trx_Id = Zl.Trx_Id
+         Where Arvt.Global_Attribute2 = 'Y'
+           And (Upper(Arvt.Global_Attribute10) Like '%IBS%' Or
+               Upper(Arvt.Global_Attribute10) Like '%CBS%'))
+      ,Tax_Calculo As
+       (Select Tb.*
+              ,Substr(Trim(Tb.Cst_Resolvido), 1, 3) As Cst_Normalizado
+              ,Case
+                 When Regexp_Like(Trim(Tb.Arvt_Global_Attribute13), '^[+-]?([0-9]+([,.][0-9]*)?|[,.][0-9]+)$') Then
+                  Fnd_Number.Canonical_To_Number(Replace(Trim(Tb.Arvt_Global_Attribute13), ',', '.'))
+               End As Aliq_Arvt_Attribute13
+              ,Case
+                 When Regexp_Like(Trim(Tb.Arvt_Global_Attribute14), '^[+-]?([0-9]+([,.][0-9]*)?|[,.][0-9]+)$') Then
+                  Fnd_Number.Canonical_To_Number(Replace(Trim(Tb.Arvt_Global_Attribute14), ',', '.'))
+               End As Per_Redaliq
+          From Tax_Base Tb)
+      ,Tax As
+       (Select Tc.*
+              ,Case
+                 When Tc.Cst_Normalizado In ('200', '510', '515') Then
+                  Coalesce(Tc.Aliq_Arvt_Attribute13, Abs(Tc.Tax_Rate))
+                 Else
+                  Abs(Tc.Tax_Rate)
+               End As Aliquota_Aplicavel
+              ,Case
+                 When Tc.Arvt_Global_Attribute20 = Tc.Cclass_Trib_Resolvida And
+                     Tc.Cst_Normalizado In ('510', '515') Then
+                  1
+                 Else
+                  0
+               End As Ind_Diferimento
+              ,Case
+                 When Tc.Arvt_Global_Attribute20 = Tc.Cclass_Trib_Resolvida And
+                     Tc.Cst_Normalizado In ('510', '515') Then
+                  100
+                 Else
+                  0
+               End As Percent_Difer
+          From Tax_Calculo Tc)
+      Select T.Link_To_Cust_Trx_Line_Id
+            ,Coalesce(Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%IBS%UF%' Then T.Cst_Normalizado End)
+                     ,Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%IBS%MUN%' Then T.Cst_Normalizado End)
+                     ,Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%CBS%' Then T.Cst_Normalizado End)
+                     ,Substr(Max(T.Rctt_Global_Attribute8), 1, 3)
+                     ,Substr(Max(T.Rctt_Global_Attribute7), 1, 3)) As Cst
+            ,Coalesce(Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%IBS%UF%' Then T.Cclass_Trib_Resolvida End)
+                     ,Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%IBS%MUN%' Then T.Cclass_Trib_Resolvida End)
+                     ,Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%CBS%' Then T.Cclass_Trib_Resolvida End)
+                     ,Max(T.Rctt_Global_Attribute8)
+                     ,Max(T.Rctt_Global_Attribute7)) As Cclass_Trib
+            ,Coalesce(Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%IBS%UF%' Then Abs(T.Taxable_Amt) End)
+                     ,Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%CBS%' Then Abs(T.Taxable_Amt) End)
+                     ,Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%IBS%MUN%' Then Abs(T.Taxable_Amt) End)) As Vl_Base_Calc
+            ,Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%IBS%MUN%' Then T.Aliquota_Aplicavel End) As Aliq_Apli_Ibsmun
+            ,Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%IBS%MUN%' And T.Cst_Normalizado In ('200', '510', '515') Then T.Per_Redaliq End) As Per_Redaliq_Ibs_Mun
+            ,Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%IBS%MUN%' And T.Ind_Diferimento = 1 Then T.Percent_Difer End) As Percent_Difer_Ibsmun
+            ,Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%IBS%MUN%' And T.Ind_Diferimento = 1 Then Round(T.Tax_Amount * (T.Percent_Difer / 100), 2) End) As Vl_Imp_Difer_Ibs_Mun
+            ,Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%IBS%MUN%' Then Round(T.Tax_Amount - (T.Tax_Amount * (T.Percent_Difer / 100)), 2) End) As Vl_Imp_Trib_Ibsmun
+            ,Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%IBS%UF%' Then T.Aliquota_Aplicavel End) As Aliq_Apli_Ibsuf
+            ,Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%IBS%UF%' And T.Cst_Normalizado In ('200', '510', '515') Then T.Per_Redaliq End) As Per_Redaliq_Ibs_Uf
+            ,Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%IBS%UF%' And T.Ind_Diferimento = 1 Then T.Percent_Difer End) As Percent_Difer_Ibs_Uf
+            ,Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%IBS%UF%' And T.Ind_Diferimento = 1 Then Round(T.Tax_Amount * (T.Percent_Difer / 100), 2) End) As Vl_Imp_Difer_Ibs_Uf
+            ,Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%IBS%UF%' Then Round(T.Tax_Amount - (T.Tax_Amount * (T.Percent_Difer / 100)), 2) End) As Vl_Imp_Trib_Ibsuf
+            ,Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%CBS%' Then T.Aliquota_Aplicavel End) As Aliq_Apli_Cbs
+            ,Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%CBS%' And T.Cst_Normalizado In ('200', '510', '515') Then T.Per_Redaliq End) As Per_Redaliq_Cbs
+            ,Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%CBS%' And T.Ind_Diferimento = 1 Then T.Percent_Difer End) As Percent_Difer_Cbs
+            ,Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%CBS%' And T.Ind_Diferimento = 1 Then Round(T.Tax_Amount * (T.Percent_Difer / 100), 2) End) As Vl_Imp_Difer_Cbs
+            ,Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%CBS%' Then Round(T.Tax_Amount - (T.Tax_Amount * (T.Percent_Difer / 100)), 2) End) As Vl_Imp_Trib_Cbs
+        From Tax T
+       Group By T.Link_To_Cust_Trx_Line_Id;
+    R5 c_Ibscbs_Calculo%Rowtype;
+    --
   Begin
     If Xxisv_Csf_Nfe_Custom_Pkg.Vw_Csf_Imp_Itemnf_f(p_Rvcinf => p_Rvcinf, p_Customer_Trx_Line_Id => p_Customer_Trx_Line_Id, p_Customer_Trx_Id => p_Customer_Trx_Id, p_Interface_Line_Context => p_Interface_Line_Context, p_Rotina => 'Xxisv_Csf_Nfe_Custom_Pkg.Vw_Csf_Imp_Itemnf_f') = 0
     Then
@@ -7434,6 +7557,27 @@ CREATE OR REPLACE Package Body Xxisv_Csf_Nfe_Pkg As
         l_Rvcii.Vl_Icmsst_Ret       := R1.Vl_Icmsst_Ret;
         l_Rvcii.Vl_Bc_St_Dest       := R1.Vl_Bc_St_Dest;
         l_Rvcii.Vl_Icmsst_Dest      := R1.Vl_Icmsst_Dest;
+        --
+        /*Valor final do IBS-UF/CBS ja liquido do diferimento (Reforma Tributaria) -- fonte: Query_final.sql*/
+        If R1.Cod_Imposto In (28, 29)
+        Then
+          Open c_Ibscbs_Calculo;
+          Fetch c_Ibscbs_Calculo
+            Into R5;
+          Close c_Ibscbs_Calculo;
+          --
+          If R1.Cod_Imposto = 28
+             And R5.Vl_Imp_Trib_Ibsuf Is Not Null
+          Then
+            R1.Vl_Imp_Trib      := R5.Vl_Imp_Trib_Ibsuf;
+            l_Rvcii.Vl_Imp_Trib := R1.Vl_Imp_Trib;
+          Elsif R1.Cod_Imposto = 29
+                And R5.Vl_Imp_Trib_Cbs Is Not Null
+          Then
+            R1.Vl_Imp_Trib      := R5.Vl_Imp_Trib_Cbs;
+            l_Rvcii.Vl_Imp_Trib := R1.Vl_Imp_Trib;
+          End If;
+        End If;
         --
         If R1.Cod_Imposto = 28 Then -- Carranza 08/09/2026
           l_Ibs_Found := True;
@@ -9849,43 +9993,139 @@ CREATE OR REPLACE Package Body Xxisv_Csf_Nfe_Pkg As
        Group By Aux.Aliq_Mun;
     R7 c_Ibsmun%Rowtype;
     --
-    /*Diferimento do IBS-UF (CST 515) - PERCENT_DIFER e VL_IMP_DIFER_UF -- fonte: EBS_RT_Tax_Mapping_ISV.xlsx (aba Deferred). Atributo especifico de IBS-UF (Cod_Imposto=28), nao se aplica a CBS.*/
-    Cursor c_PercentdiferIBSUF Is
-      Select (Arvt.Global_Attribute14 * 10000) Percent_Difer
-            ,(Nvl(Zl.Cal_Tax_Amt, Zl.Tax_Amt) * 100) Vl_Imp_Difer_Uf
-        From Zx_Lines       Zl
-            ,Ar_Vat_Tax_All Arvt
-       Where 1 = 1
-         And Zl.Tax_Rate_Id = Arvt.Vat_Tax_Id
-         And Arvt.Global_Attribute2 = 'Y'
-         And Arvt.Global_Attribute10 = 'IBSUF'
-         And Nvl(p_Rvcii.Cod_St, Arvt.Global_Attribute19) = '515'
-         And Zl.Trx_Line_Id = p_Customer_Trx_Line_Id
-         And p_Cod_Imposto = 28;
-    R8 c_PercentdiferIBSUF%Rowtype;
-    --
-    /*Reducao de aliquota (CST 200) e reducao com diferimento (CST 515) do IBS-UF/CBS - PER_REDALIQ_IBS_CBS e ALIQ_EFET_IBS_CBS -- fonte: EBS_RT_Tax_Mapping_ISV.xlsx (aba Tax Rate Reduction)*/
-    Cursor c_RedaliqIbsCbs Is
-      Select (Arvt.Global_Attribute14 * 10000) Per_Redaliq_Ibs_Cbs
-            ,(Abs(Zl.Tax_Rate) * 10000) Aliq_Efet_Ibs_Cbs
-        From Zx_Lines       Zl
-            ,Ar_Vat_Tax_All Arvt
-       Where 1 = 1
-         And Zl.Tax_Rate_Id = Arvt.Vat_Tax_Id
-         And Arvt.Global_Attribute2 = 'Y'
-         And Arvt.Global_Attribute10 =
-             Case
-               When p_Cod_Imposto = 28 Then
-                'IBSUF'
-               When p_Cod_Imposto = 29 Then
-                'CBS'
-             End
-         And Nvl(p_Rvcii.Cod_St, Arvt.Global_Attribute19) In ('200', '515')
-         And Zl.Trx_Line_Id = p_Customer_Trx_Line_Id
-         And p_Cod_Imposto In (28, 29);
-    R9 c_RedaliqIbsCbs%Rowtype;
+    /*Calculo unificado do IBS Municipal, IBS Estadual e CBS (Reforma Tributaria): CST/ClassTrib, base de calculo, aliquota aplicavel, reducao de aliquota e diferimento (identificacao, percentual e valor) e valor final de cada imposto ja liquido do diferimento -- fonte: Query_final.sql*/
+    Cursor c_Ibscbs_Calculo Is
+      With Item As
+       (Select Rctl.Customer_Trx_Line_Id
+              ,Rctl.Customer_Trx_Id
+              ,Rctl.Org_Id
+              ,Rctt.Global_Attribute7 As Rctt_Global_Attribute7
+              ,Rctt.Global_Attribute8 As Rctt_Global_Attribute8
+          From Ra_Customer_Trx_Lines_All Rctl
+          Join Ra_Customer_Trx_All Rcta
+            On Rcta.Customer_Trx_Id = Rctl.Customer_Trx_Id
+           And Rcta.Org_Id = Rctl.Org_Id
+          Join Ra_Cust_Trx_Types_All Rctt
+            On Rctt.Cust_Trx_Type_Id = Rcta.Cust_Trx_Type_Id
+           And Rctt.Org_Id = Rcta.Org_Id
+         Where Rctl.Customer_Trx_Line_Id = p_Customer_Trx_Line_Id
+           And Rctl.Line_Type = 'LINE')
+      ,Tax_Base As
+       (Select Zl.Trx_Line_Id As Link_To_Cust_Trx_Line_Id
+              ,Zl.Trx_Id As Customer_Trx_Id
+              ,Arvt.Global_Attribute10 As Arvt_Global_Attribute10
+              ,Arvt.Global_Attribute13 As Arvt_Global_Attribute13
+              ,Arvt.Global_Attribute14 As Arvt_Global_Attribute14
+              ,Arvt.Global_Attribute20 As Arvt_Global_Attribute20
+              ,Zl.Global_Attribute13 As Zl_Global_Attribute13
+              ,Zl.Global_Attribute14 As Zl_Global_Attribute14
+              ,Zl.Taxable_Amt
+              ,Zl.Tax_Rate
+              ,Abs(Nvl(Zl.Cal_Tax_Amt, Zl.Tax_Amt)) As Tax_Amount
+              ,I.Rctt_Global_Attribute7
+              ,I.Rctt_Global_Attribute8
+              ,Coalesce(Zl.Global_Attribute13
+                       ,Case
+                          When Upper(Arvt.Global_Attribute10) Like '%CBS%' Then
+                           Substr(I.Rctt_Global_Attribute7, 1, 3)
+                          When Upper(Arvt.Global_Attribute10) Like '%IBS%' Then
+                           Substr(I.Rctt_Global_Attribute8, 1, 3)
+                        End) As Cst_Resolvido
+              ,Coalesce(Zl.Global_Attribute14
+                       ,Case
+                          When Upper(Arvt.Global_Attribute10) Like '%CBS%' Then
+                           I.Rctt_Global_Attribute7
+                          When Upper(Arvt.Global_Attribute10) Like '%IBS%' Then
+                           I.Rctt_Global_Attribute8
+                        End) As Cclass_Trib_Resolvida
+          From Zx_Lines Zl
+          Join Ar_Vat_Tax_All Arvt
+            On Arvt.Vat_Tax_Id = Zl.Tax_Rate_Id
+           And Arvt.Org_Id = Zl.Internal_Organization_Id
+          Join Item I
+            On I.Customer_Trx_Line_Id = Zl.Trx_Line_Id
+           And I.Customer_Trx_Id = Zl.Trx_Id
+         Where Arvt.Global_Attribute2 = 'Y'
+           And (Upper(Arvt.Global_Attribute10) Like '%IBS%' Or
+               Upper(Arvt.Global_Attribute10) Like '%CBS%'))
+      ,Tax_Calculo As
+       (Select Tb.*
+              ,Substr(Trim(Tb.Cst_Resolvido), 1, 3) As Cst_Normalizado
+              ,Case
+                 When Regexp_Like(Trim(Tb.Arvt_Global_Attribute13), '^[+-]?([0-9]+([,.][0-9]*)?|[,.][0-9]+)$') Then
+                  Fnd_Number.Canonical_To_Number(Replace(Trim(Tb.Arvt_Global_Attribute13), ',', '.'))
+               End As Aliq_Arvt_Attribute13
+              ,Case
+                 When Regexp_Like(Trim(Tb.Arvt_Global_Attribute14), '^[+-]?([0-9]+([,.][0-9]*)?|[,.][0-9]+)$') Then
+                  Fnd_Number.Canonical_To_Number(Replace(Trim(Tb.Arvt_Global_Attribute14), ',', '.'))
+               End As Per_Redaliq
+          From Tax_Base Tb)
+      ,Tax As
+       (Select Tc.*
+              ,Case
+                 When Tc.Cst_Normalizado In ('200', '510', '515') Then
+                  Coalesce(Tc.Aliq_Arvt_Attribute13, Abs(Tc.Tax_Rate))
+                 Else
+                  Abs(Tc.Tax_Rate)
+               End As Aliquota_Aplicavel
+              ,Case
+                 When Tc.Arvt_Global_Attribute20 = Tc.Cclass_Trib_Resolvida And
+                     Tc.Cst_Normalizado In ('510', '515') Then
+                  1
+                 Else
+                  0
+               End As Ind_Diferimento
+              ,Case
+                 When Tc.Arvt_Global_Attribute20 = Tc.Cclass_Trib_Resolvida And
+                     Tc.Cst_Normalizado In ('510', '515') Then
+                  100
+                 Else
+                  0
+               End As Percent_Difer
+          From Tax_Calculo Tc)
+      Select T.Link_To_Cust_Trx_Line_Id
+            ,Coalesce(Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%IBS%UF%' Then T.Cst_Normalizado End)
+                     ,Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%IBS%MUN%' Then T.Cst_Normalizado End)
+                     ,Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%CBS%' Then T.Cst_Normalizado End)
+                     ,Substr(Max(T.Rctt_Global_Attribute8), 1, 3)
+                     ,Substr(Max(T.Rctt_Global_Attribute7), 1, 3)) As Cst
+            ,Coalesce(Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%IBS%UF%' Then T.Cclass_Trib_Resolvida End)
+                     ,Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%IBS%MUN%' Then T.Cclass_Trib_Resolvida End)
+                     ,Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%CBS%' Then T.Cclass_Trib_Resolvida End)
+                     ,Max(T.Rctt_Global_Attribute8)
+                     ,Max(T.Rctt_Global_Attribute7)) As Cclass_Trib
+            ,Coalesce(Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%IBS%UF%' Then Abs(T.Taxable_Amt) End)
+                     ,Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%CBS%' Then Abs(T.Taxable_Amt) End)
+                     ,Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%IBS%MUN%' Then Abs(T.Taxable_Amt) End)) As Vl_Base_Calc
+            ,Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%IBS%MUN%' Then T.Aliquota_Aplicavel End) As Aliq_Apli_Ibsmun
+            ,Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%IBS%MUN%' And T.Cst_Normalizado In ('200', '510', '515') Then T.Per_Redaliq End) As Per_Redaliq_Ibs_Mun
+            ,Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%IBS%MUN%' And T.Ind_Diferimento = 1 Then T.Percent_Difer End) As Percent_Difer_Ibsmun
+            ,Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%IBS%MUN%' And T.Ind_Diferimento = 1 Then Round(T.Tax_Amount * (T.Percent_Difer / 100), 2) End) As Vl_Imp_Difer_Ibs_Mun
+            ,Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%IBS%MUN%' Then Round(T.Tax_Amount - (T.Tax_Amount * (T.Percent_Difer / 100)), 2) End) As Vl_Imp_Trib_Ibsmun
+            ,Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%IBS%UF%' Then T.Aliquota_Aplicavel End) As Aliq_Apli_Ibsuf
+            ,Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%IBS%UF%' And T.Cst_Normalizado In ('200', '510', '515') Then T.Per_Redaliq End) As Per_Redaliq_Ibs_Uf
+            ,Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%IBS%UF%' And T.Ind_Diferimento = 1 Then T.Percent_Difer End) As Percent_Difer_Ibs_Uf
+            ,Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%IBS%UF%' And T.Ind_Diferimento = 1 Then Round(T.Tax_Amount * (T.Percent_Difer / 100), 2) End) As Vl_Imp_Difer_Ibs_Uf
+            ,Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%IBS%UF%' Then Round(T.Tax_Amount - (T.Tax_Amount * (T.Percent_Difer / 100)), 2) End) As Vl_Imp_Trib_Ibsuf
+            ,Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%CBS%' Then T.Aliquota_Aplicavel End) As Aliq_Apli_Cbs
+            ,Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%CBS%' And T.Cst_Normalizado In ('200', '510', '515') Then T.Per_Redaliq End) As Per_Redaliq_Cbs
+            ,Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%CBS%' And T.Ind_Diferimento = 1 Then T.Percent_Difer End) As Percent_Difer_Cbs
+            ,Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%CBS%' And T.Ind_Diferimento = 1 Then Round(T.Tax_Amount * (T.Percent_Difer / 100), 2) End) As Vl_Imp_Difer_Cbs
+            ,Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%CBS%' Then Round(T.Tax_Amount - (T.Tax_Amount * (T.Percent_Difer / 100)), 2) End) As Vl_Imp_Trib_Cbs
+        From Tax T
+       Group By T.Link_To_Cust_Trx_Line_Id;
+    R8 c_Ibscbs_Calculo%Rowtype;
     --
   Begin
+    /*Calculo unificado do IBS-UF, CBS e IBS Municipal (Reforma Tributaria), buscado uma unica vez por chamada -- fonte: Query_final.sql*/
+    If p_Cod_Imposto In (28, 29)
+    Then
+      Open c_Ibscbs_Calculo;
+      Fetch c_Ibscbs_Calculo
+        Into R8;
+      Close c_Ibscbs_Calculo;
+    End If;
+    --
     Open C1;
     Loop
       Fetch C1
@@ -10043,99 +10283,104 @@ CREATE OR REPLACE Package Body Xxisv_Csf_Nfe_Pkg As
         Into R7;
       Exit When c_Ibsmun%Notfound;
       ---
-      Begin
-        Insert Into Vw_Csf_Imp_Itemnf_Ff
-          (Cpf_Cnpj_Emit
-          ,Dm_Ind_Emit
-          ,Dm_Ind_Oper
-          ,Cod_Part
-          ,Cod_Mod
-          ,Serie
-          ,Nro_Nf
-          ,Nro_Item
-          ,Cod_Imposto
-          ,Dm_Tipo
-          ,Atributo
-          ,Valor)
-        Values
-          (p_Rvcii.Cpf_Cnpj_Emit
-          ,p_Rvcii.Dm_Ind_Emit
-          ,p_Rvcii.Dm_Ind_Oper
-          ,p_Rvcii.Cod_Part
-          ,p_Rvcii.Cod_Mod
-          ,p_Rvcii.Serie
-          ,p_Rvcii.Nro_Nf
-          ,p_Rvcii.Nro_Item
-          ,p_Rvcii.Cod_Imposto
-          ,p_Rvcii.Dm_Tipo
-          ,'ALIQ_APLIC_MUN'
-          ,R7.Aliq_Mun);
-      Exception
-        When Dup_Val_On_Index Then
-          Null;
-        When Others Then
+      /*Fallback: mantido apenas para quando a query unificada nao devolver o IBS Municipal desta linha -- fonte: Query_final.sql*/
+      If R8.Aliq_Apli_Ibsmun Is Null
+      Then
+        Begin
+          Insert Into Vw_Csf_Imp_Itemnf_Ff
+            (Cpf_Cnpj_Emit
+            ,Dm_Ind_Emit
+            ,Dm_Ind_Oper
+            ,Cod_Part
+            ,Cod_Mod
+            ,Serie
+            ,Nro_Nf
+            ,Nro_Item
+            ,Cod_Imposto
+            ,Dm_Tipo
+            ,Atributo
+            ,Valor)
+          Values
+            (p_Rvcii.Cpf_Cnpj_Emit
+            ,p_Rvcii.Dm_Ind_Emit
+            ,p_Rvcii.Dm_Ind_Oper
+            ,p_Rvcii.Cod_Part
+            ,p_Rvcii.Cod_Mod
+            ,p_Rvcii.Serie
+            ,p_Rvcii.Nro_Nf
+            ,p_Rvcii.Nro_Item
+            ,p_Rvcii.Cod_Imposto
+            ,p_Rvcii.Dm_Tipo
+            ,'ALIQ_APLIC_MUN'
+            ,R7.Aliq_Mun);
+        Exception
+          When Dup_Val_On_Index Then
+            Null;
+          When Others Then
+            --
+            g_Retcode   := 1;
+            g_Erro      := Nvl(g_Erro, 0) + 1;
+            l_Desc_Erro := 'Vw_Csf_Imp_Itemnf_Ff_p (ALIQ_APLIC_MUN) - ' || 'Cpf_Cnpj_Emit: ' ||
+                           p_Rvcii.Cpf_Cnpj_Emit || ', Dm_Ind_Emit: ' ||
+                           p_Rvcii.Dm_Ind_Emit || ', Cod_Mod: ' ||
+                           p_Rvcii.Cod_Mod || ', Serie: ' || p_Rvcii.Serie ||
+                           ', Nro_Nf: ' || p_Rvcii.Nro_Nf || ', Nro_Item: ' ||
+                           p_Rvcii.Nro_Item || ', Erro: ' || Sqlerrm;
+            g_Erro_Msg  := l_Desc_Erro;
+            --
+            Fnd_File.Put_Line(Fnd_File.Log, l_Desc_Erro);
+            --
           --
-          g_Retcode   := 1;
-          g_Erro      := Nvl(g_Erro, 0) + 1;
-          l_Desc_Erro := 'Vw_Csf_Imp_Itemnf_Ff_p (ALIQ_APLIC_MUN) - ' || 'Cpf_Cnpj_Emit: ' ||
-                         p_Rvcii.Cpf_Cnpj_Emit || ', Dm_Ind_Emit: ' ||
-                         p_Rvcii.Dm_Ind_Emit || ', Cod_Mod: ' ||
-                         p_Rvcii.Cod_Mod || ', Serie: ' || p_Rvcii.Serie ||
-                         ', Nro_Nf: ' || p_Rvcii.Nro_Nf || ', Nro_Item: ' ||
-                         p_Rvcii.Nro_Item || ', Erro: ' || Sqlerrm;
-          g_Erro_Msg  := l_Desc_Erro;
+        End;
+        ---
+        Begin
+          Insert Into Vw_Csf_Imp_Itemnf_Ff
+            (Cpf_Cnpj_Emit
+            ,Dm_Ind_Emit
+            ,Dm_Ind_Oper
+            ,Cod_Part
+            ,Cod_Mod
+            ,Serie
+            ,Nro_Nf
+            ,Nro_Item
+            ,Cod_Imposto
+            ,Dm_Tipo
+            ,Atributo
+            ,Valor)
+          Values
+            (p_Rvcii.Cpf_Cnpj_Emit
+            ,p_Rvcii.Dm_Ind_Emit
+            ,p_Rvcii.Dm_Ind_Oper
+            ,p_Rvcii.Cod_Part
+            ,p_Rvcii.Cod_Mod
+            ,p_Rvcii.Serie
+            ,p_Rvcii.Nro_Nf
+            ,p_Rvcii.Nro_Item
+            ,p_Rvcii.Cod_Imposto
+            ,p_Rvcii.Dm_Tipo
+            ,'VL_IMP_TRIB_MUN'
+            ,R7.Vl_Mun);
+        Exception
+          When Dup_Val_On_Index Then
+            Null;
+          When Others Then
+            --
+            g_Retcode   := 1;
+            g_Erro      := Nvl(g_Erro, 0) + 1;
+            l_Desc_Erro := 'Vw_Csf_Imp_Itemnf_Ff_p (VL_IMP_TRIB_MUN) - ' || 'Cpf_Cnpj_Emit: ' ||
+                           p_Rvcii.Cpf_Cnpj_Emit || ', Dm_Ind_Emit: ' ||
+                           p_Rvcii.Dm_Ind_Emit || ', Cod_Mod: ' ||
+                           p_Rvcii.Cod_Mod || ', Serie: ' || p_Rvcii.Serie ||
+                           ', Nro_Nf: ' || p_Rvcii.Nro_Nf || ', Nro_Item: ' ||
+                           p_Rvcii.Nro_Item || ', Erro: ' || Sqlerrm;
+            g_Erro_Msg  := l_Desc_Erro;
+            --
+            Fnd_File.Put_Line(Fnd_File.Log, l_Desc_Erro);
+            --
           --
-          Fnd_File.Put_Line(Fnd_File.Log, l_Desc_Erro);
-          --
-        --
-      End;
-      ---
-      Begin
-        Insert Into Vw_Csf_Imp_Itemnf_Ff
-          (Cpf_Cnpj_Emit
-          ,Dm_Ind_Emit
-          ,Dm_Ind_Oper
-          ,Cod_Part
-          ,Cod_Mod
-          ,Serie
-          ,Nro_Nf
-          ,Nro_Item
-          ,Cod_Imposto
-          ,Dm_Tipo
-          ,Atributo
-          ,Valor)
-        Values
-          (p_Rvcii.Cpf_Cnpj_Emit
-          ,p_Rvcii.Dm_Ind_Emit
-          ,p_Rvcii.Dm_Ind_Oper
-          ,p_Rvcii.Cod_Part
-          ,p_Rvcii.Cod_Mod
-          ,p_Rvcii.Serie
-          ,p_Rvcii.Nro_Nf
-          ,p_Rvcii.Nro_Item
-          ,p_Rvcii.Cod_Imposto
-          ,p_Rvcii.Dm_Tipo
-          ,'VL_IMP_TRIB_MUN'
-          ,R7.Vl_Mun);
-      Exception
-        When Dup_Val_On_Index Then
-          Null;
-        When Others Then
-          --
-          g_Retcode   := 1;
-          g_Erro      := Nvl(g_Erro, 0) + 1;
-          l_Desc_Erro := 'Vw_Csf_Imp_Itemnf_Ff_p (VL_IMP_TRIB_MUN) - ' || 'Cpf_Cnpj_Emit: ' ||
-                         p_Rvcii.Cpf_Cnpj_Emit || ', Dm_Ind_Emit: ' ||
-                         p_Rvcii.Dm_Ind_Emit || ', Cod_Mod: ' ||
-                         p_Rvcii.Cod_Mod || ', Serie: ' || p_Rvcii.Serie ||
-                         ', Nro_Nf: ' || p_Rvcii.Nro_Nf || ', Nro_Item: ' ||
-                         p_Rvcii.Nro_Item || ', Erro: ' || Sqlerrm;
-          g_Erro_Msg  := l_Desc_Erro;
-          --
-          Fnd_File.Put_Line(Fnd_File.Log, l_Desc_Erro);
-          --
-        --
-      End;
+        End;
+        ---
+      End If;
       ---
     End Loop;
     Close c_Ibsmun;
@@ -10969,15 +11214,12 @@ CREATE OR REPLACE Package Body Xxisv_Csf_Nfe_Pkg As
       End If;
     End If;
     --
-    If p_Rvcii.Cod_St In ('515')
-       And p_Cod_Imposto = 28
+    /*Atributos complementares do IBS-UF, CBS e IBS Municipal (Reforma Tributaria), derivados da mesma query unificada (R8) buscada no inicio da procedure -- fonte: Query_final.sql*/
+    If p_Cod_Imposto = 28
     Then
-      Open c_PercentdiferIBSUF;
-      Loop
-        Fetch c_PercentdiferIBSUF
-          Into R8;
-        Exit When c_PercentdiferIBSUF%Notfound;
-        ---
+      ---IBS Estadual: diferimento (CST 510/515)
+      If R8.Percent_Difer_Ibs_Uf Is Not Null
+      Then
         Begin
           Insert Into Vw_Csf_Imp_Itemnf_Ff
             (Cpf_Cnpj_Emit
@@ -11004,7 +11246,7 @@ CREATE OR REPLACE Package Body Xxisv_Csf_Nfe_Pkg As
             ,p_Rvcii.Cod_Imposto
             ,p_Rvcii.Dm_Tipo
             ,'PERCENT_DIFER'
-            ,R8.Percent_Difer);
+            ,Round(Nvl(R8.Percent_Difer_Ibs_Uf, 0) * 10000));
         Exception
           When Dup_Val_On_Index Then
             Null;
@@ -11023,7 +11265,6 @@ CREATE OR REPLACE Package Body Xxisv_Csf_Nfe_Pkg As
             --
             Fnd_File.Put_Line(Fnd_File.Log, l_Desc_Erro);
             --
-          --
         End;
         ---
         Begin
@@ -11052,7 +11293,7 @@ CREATE OR REPLACE Package Body Xxisv_Csf_Nfe_Pkg As
             ,p_Rvcii.Cod_Imposto
             ,p_Rvcii.Dm_Tipo
             ,'VL_IMP_DIFER_UF'
-            ,R8.Vl_Imp_Difer_Uf);
+            ,Round(Nvl(R8.Vl_Imp_Difer_Ibs_Uf, 0) * 100));
         Exception
           When Dup_Val_On_Index Then
             Null;
@@ -11071,22 +11312,12 @@ CREATE OR REPLACE Package Body Xxisv_Csf_Nfe_Pkg As
             --
             Fnd_File.Put_Line(Fnd_File.Log, l_Desc_Erro);
             --
-          --
         End;
         ---
-      End Loop;
-      Close c_PercentdiferIBSUF;
-    End If;
-    --
-    If p_Rvcii.Cod_St In ('200', '515')
-       And p_Cod_Imposto In (28, 29)
-    Then
-      Open c_RedaliqIbsCbs;
-      Loop
-        Fetch c_RedaliqIbsCbs
-          Into R9;
-        Exit When c_RedaliqIbsCbs%Notfound;
-        ---
+      End If;
+      ---IBS Estadual: reducao de aliquota (CST 200/510/515) e aliquota efetiva = aliquota aplicavel * (1 - percentual de reducao / 100)
+      If R8.Per_Redaliq_Ibs_Uf Is Not Null
+      Then
         Begin
           Insert Into Vw_Csf_Imp_Itemnf_Ff
             (Cpf_Cnpj_Emit
@@ -11113,7 +11344,7 @@ CREATE OR REPLACE Package Body Xxisv_Csf_Nfe_Pkg As
             ,p_Rvcii.Cod_Imposto
             ,p_Rvcii.Dm_Tipo
             ,'PER_REDALIQ_IBS_CBS'
-            ,R9.Per_Redaliq_Ibs_Cbs);
+            ,Round(Nvl(R8.Per_Redaliq_Ibs_Uf, 0) * 10000));
         Exception
           When Dup_Val_On_Index Then
             Null;
@@ -11132,7 +11363,6 @@ CREATE OR REPLACE Package Body Xxisv_Csf_Nfe_Pkg As
             --
             Fnd_File.Put_Line(Fnd_File.Log, l_Desc_Erro);
             --
-          --
         End;
         ---
         Begin
@@ -11161,7 +11391,7 @@ CREATE OR REPLACE Package Body Xxisv_Csf_Nfe_Pkg As
             ,p_Rvcii.Cod_Imposto
             ,p_Rvcii.Dm_Tipo
             ,'ALIQ_EFET_IBS_CBS'
-            ,R9.Aliq_Efet_Ibs_Cbs);
+            ,Round(Nvl(R8.Aliq_Apli_Ibsuf, 0) * (1 - (Nvl(R8.Per_Redaliq_Ibs_Uf, 0) / 100)) * 10000));
         Exception
           When Dup_Val_On_Index Then
             Null;
@@ -11180,11 +11410,454 @@ CREATE OR REPLACE Package Body Xxisv_Csf_Nfe_Pkg As
             --
             Fnd_File.Put_Line(Fnd_File.Log, l_Desc_Erro);
             --
-          --
         End;
         ---
-      End Loop;
-      Close c_RedaliqIbsCbs;
+      End If;
+      ---IBS Municipal: aliquota aplicavel e valor final (ja liquido do diferimento)
+      If R8.Aliq_Apli_Ibsmun Is Not Null
+      Then
+        Begin
+          Insert Into Vw_Csf_Imp_Itemnf_Ff
+            (Cpf_Cnpj_Emit
+            ,Dm_Ind_Emit
+            ,Dm_Ind_Oper
+            ,Cod_Part
+            ,Cod_Mod
+            ,Serie
+            ,Nro_Nf
+            ,Nro_Item
+            ,Cod_Imposto
+            ,Dm_Tipo
+            ,Atributo
+            ,Valor)
+          Values
+            (p_Rvcii.Cpf_Cnpj_Emit
+            ,p_Rvcii.Dm_Ind_Emit
+            ,p_Rvcii.Dm_Ind_Oper
+            ,p_Rvcii.Cod_Part
+            ,p_Rvcii.Cod_Mod
+            ,p_Rvcii.Serie
+            ,p_Rvcii.Nro_Nf
+            ,p_Rvcii.Nro_Item
+            ,p_Rvcii.Cod_Imposto
+            ,p_Rvcii.Dm_Tipo
+            ,'ALIQ_APLIC_MUN'
+            ,Round(Nvl(R8.Aliq_Apli_Ibsmun, 0) * 10000));
+        Exception
+          When Dup_Val_On_Index Then
+            Null;
+          When Others Then
+            --
+            g_Retcode   := 1;
+            g_Erro      := Nvl(g_Erro, 0) + 1;
+            l_Desc_Erro := 'Vw_Csf_Imp_Itemnf_Ff_p (ALIQ_APLIC_MUN) - ' ||
+                           'Cpf_Cnpj_Emit: ' || p_Rvcii.Cpf_Cnpj_Emit ||
+                           ', Dm_Ind_Emit: ' || p_Rvcii.Dm_Ind_Emit ||
+                           ', Cod_Mod: ' || p_Rvcii.Cod_Mod || ', Serie: ' ||
+                           p_Rvcii.Serie || ', Nro_Nf: ' || p_Rvcii.Nro_Nf ||
+                           ', Nro_Item: ' || p_Rvcii.Nro_Item || ', Erro: ' ||
+                           Sqlerrm;
+            g_Erro_Msg  := l_Desc_Erro;
+            --
+            Fnd_File.Put_Line(Fnd_File.Log, l_Desc_Erro);
+            --
+        End;
+        ---
+        Begin
+          Insert Into Vw_Csf_Imp_Itemnf_Ff
+            (Cpf_Cnpj_Emit
+            ,Dm_Ind_Emit
+            ,Dm_Ind_Oper
+            ,Cod_Part
+            ,Cod_Mod
+            ,Serie
+            ,Nro_Nf
+            ,Nro_Item
+            ,Cod_Imposto
+            ,Dm_Tipo
+            ,Atributo
+            ,Valor)
+          Values
+            (p_Rvcii.Cpf_Cnpj_Emit
+            ,p_Rvcii.Dm_Ind_Emit
+            ,p_Rvcii.Dm_Ind_Oper
+            ,p_Rvcii.Cod_Part
+            ,p_Rvcii.Cod_Mod
+            ,p_Rvcii.Serie
+            ,p_Rvcii.Nro_Nf
+            ,p_Rvcii.Nro_Item
+            ,p_Rvcii.Cod_Imposto
+            ,p_Rvcii.Dm_Tipo
+            ,'VL_IMP_TRIB_MUN'
+            ,Round(Nvl(R8.Vl_Imp_Trib_Ibsmun, 0) * 100));
+        Exception
+          When Dup_Val_On_Index Then
+            Null;
+          When Others Then
+            --
+            g_Retcode   := 1;
+            g_Erro      := Nvl(g_Erro, 0) + 1;
+            l_Desc_Erro := 'Vw_Csf_Imp_Itemnf_Ff_p (VL_IMP_TRIB_MUN) - ' ||
+                           'Cpf_Cnpj_Emit: ' || p_Rvcii.Cpf_Cnpj_Emit ||
+                           ', Dm_Ind_Emit: ' || p_Rvcii.Dm_Ind_Emit ||
+                           ', Cod_Mod: ' || p_Rvcii.Cod_Mod || ', Serie: ' ||
+                           p_Rvcii.Serie || ', Nro_Nf: ' || p_Rvcii.Nro_Nf ||
+                           ', Nro_Item: ' || p_Rvcii.Nro_Item || ', Erro: ' ||
+                           Sqlerrm;
+            g_Erro_Msg  := l_Desc_Erro;
+            --
+            Fnd_File.Put_Line(Fnd_File.Log, l_Desc_Erro);
+            --
+        End;
+        ---
+        ---IBS Municipal: reducao de aliquota
+        If R8.Per_Redaliq_Ibs_Mun Is Not Null
+        Then
+          Begin
+            Insert Into Vw_Csf_Imp_Itemnf_Ff
+              (Cpf_Cnpj_Emit
+              ,Dm_Ind_Emit
+              ,Dm_Ind_Oper
+              ,Cod_Part
+              ,Cod_Mod
+              ,Serie
+              ,Nro_Nf
+              ,Nro_Item
+              ,Cod_Imposto
+              ,Dm_Tipo
+              ,Atributo
+              ,Valor)
+            Values
+              (p_Rvcii.Cpf_Cnpj_Emit
+              ,p_Rvcii.Dm_Ind_Emit
+              ,p_Rvcii.Dm_Ind_Oper
+              ,p_Rvcii.Cod_Part
+              ,p_Rvcii.Cod_Mod
+              ,p_Rvcii.Serie
+              ,p_Rvcii.Nro_Nf
+              ,p_Rvcii.Nro_Item
+              ,p_Rvcii.Cod_Imposto
+              ,p_Rvcii.Dm_Tipo
+              ,'PER_REDALIQ_IBS_MUN'
+              ,Round(Nvl(R8.Per_Redaliq_Ibs_Mun, 0) * 10000));
+          Exception
+            When Dup_Val_On_Index Then
+              Null;
+            When Others Then
+              --
+              g_Retcode   := 1;
+              g_Erro      := Nvl(g_Erro, 0) + 1;
+              l_Desc_Erro := 'Vw_Csf_Imp_Itemnf_Ff_p (PER_REDALIQ_IBS_MUN) - ' ||
+                             'Cpf_Cnpj_Emit: ' || p_Rvcii.Cpf_Cnpj_Emit ||
+                             ', Dm_Ind_Emit: ' || p_Rvcii.Dm_Ind_Emit ||
+                             ', Cod_Mod: ' || p_Rvcii.Cod_Mod || ', Serie: ' ||
+                             p_Rvcii.Serie || ', Nro_Nf: ' || p_Rvcii.Nro_Nf ||
+                             ', Nro_Item: ' || p_Rvcii.Nro_Item || ', Erro: ' ||
+                             Sqlerrm;
+              g_Erro_Msg  := l_Desc_Erro;
+              --
+              Fnd_File.Put_Line(Fnd_File.Log, l_Desc_Erro);
+              --
+          End;
+          ---
+        End If;
+        ---IBS Municipal: diferimento
+        If R8.Percent_Difer_Ibsmun Is Not Null
+        Then
+          Begin
+            Insert Into Vw_Csf_Imp_Itemnf_Ff
+              (Cpf_Cnpj_Emit
+              ,Dm_Ind_Emit
+              ,Dm_Ind_Oper
+              ,Cod_Part
+              ,Cod_Mod
+              ,Serie
+              ,Nro_Nf
+              ,Nro_Item
+              ,Cod_Imposto
+              ,Dm_Tipo
+              ,Atributo
+              ,Valor)
+            Values
+              (p_Rvcii.Cpf_Cnpj_Emit
+              ,p_Rvcii.Dm_Ind_Emit
+              ,p_Rvcii.Dm_Ind_Oper
+              ,p_Rvcii.Cod_Part
+              ,p_Rvcii.Cod_Mod
+              ,p_Rvcii.Serie
+              ,p_Rvcii.Nro_Nf
+              ,p_Rvcii.Nro_Item
+              ,p_Rvcii.Cod_Imposto
+              ,p_Rvcii.Dm_Tipo
+              ,'PERCENT_DIFER_MUN'
+              ,Round(Nvl(R8.Percent_Difer_Ibsmun, 0) * 10000));
+          Exception
+            When Dup_Val_On_Index Then
+              Null;
+            When Others Then
+              --
+              g_Retcode   := 1;
+              g_Erro      := Nvl(g_Erro, 0) + 1;
+              l_Desc_Erro := 'Vw_Csf_Imp_Itemnf_Ff_p (PERCENT_DIFER_MUN) - ' ||
+                             'Cpf_Cnpj_Emit: ' || p_Rvcii.Cpf_Cnpj_Emit ||
+                             ', Dm_Ind_Emit: ' || p_Rvcii.Dm_Ind_Emit ||
+                             ', Cod_Mod: ' || p_Rvcii.Cod_Mod || ', Serie: ' ||
+                             p_Rvcii.Serie || ', Nro_Nf: ' || p_Rvcii.Nro_Nf ||
+                             ', Nro_Item: ' || p_Rvcii.Nro_Item || ', Erro: ' ||
+                             Sqlerrm;
+              g_Erro_Msg  := l_Desc_Erro;
+              --
+              Fnd_File.Put_Line(Fnd_File.Log, l_Desc_Erro);
+              --
+          End;
+          ---
+          Begin
+            Insert Into Vw_Csf_Imp_Itemnf_Ff
+              (Cpf_Cnpj_Emit
+              ,Dm_Ind_Emit
+              ,Dm_Ind_Oper
+              ,Cod_Part
+              ,Cod_Mod
+              ,Serie
+              ,Nro_Nf
+              ,Nro_Item
+              ,Cod_Imposto
+              ,Dm_Tipo
+              ,Atributo
+              ,Valor)
+            Values
+              (p_Rvcii.Cpf_Cnpj_Emit
+              ,p_Rvcii.Dm_Ind_Emit
+              ,p_Rvcii.Dm_Ind_Oper
+              ,p_Rvcii.Cod_Part
+              ,p_Rvcii.Cod_Mod
+              ,p_Rvcii.Serie
+              ,p_Rvcii.Nro_Nf
+              ,p_Rvcii.Nro_Item
+              ,p_Rvcii.Cod_Imposto
+              ,p_Rvcii.Dm_Tipo
+              ,'VL_IMP_DIFER_MUN'
+              ,Round(Nvl(R8.Vl_Imp_Difer_Ibs_Mun, 0) * 100));
+          Exception
+            When Dup_Val_On_Index Then
+              Null;
+            When Others Then
+              --
+              g_Retcode   := 1;
+              g_Erro      := Nvl(g_Erro, 0) + 1;
+              l_Desc_Erro := 'Vw_Csf_Imp_Itemnf_Ff_p (VL_IMP_DIFER_MUN) - ' ||
+                             'Cpf_Cnpj_Emit: ' || p_Rvcii.Cpf_Cnpj_Emit ||
+                             ', Dm_Ind_Emit: ' || p_Rvcii.Dm_Ind_Emit ||
+                             ', Cod_Mod: ' || p_Rvcii.Cod_Mod || ', Serie: ' ||
+                             p_Rvcii.Serie || ', Nro_Nf: ' || p_Rvcii.Nro_Nf ||
+                             ', Nro_Item: ' || p_Rvcii.Nro_Item || ', Erro: ' ||
+                             Sqlerrm;
+              g_Erro_Msg  := l_Desc_Erro;
+              --
+              Fnd_File.Put_Line(Fnd_File.Log, l_Desc_Erro);
+              --
+          End;
+          ---
+        End If;
+      End If;
+    Elsif p_Cod_Imposto = 29
+    Then
+      ---CBS: diferimento (CST 510/515)
+      If R8.Percent_Difer_Cbs Is Not Null
+      Then
+        Begin
+          Insert Into Vw_Csf_Imp_Itemnf_Ff
+            (Cpf_Cnpj_Emit
+            ,Dm_Ind_Emit
+            ,Dm_Ind_Oper
+            ,Cod_Part
+            ,Cod_Mod
+            ,Serie
+            ,Nro_Nf
+            ,Nro_Item
+            ,Cod_Imposto
+            ,Dm_Tipo
+            ,Atributo
+            ,Valor)
+          Values
+            (p_Rvcii.Cpf_Cnpj_Emit
+            ,p_Rvcii.Dm_Ind_Emit
+            ,p_Rvcii.Dm_Ind_Oper
+            ,p_Rvcii.Cod_Part
+            ,p_Rvcii.Cod_Mod
+            ,p_Rvcii.Serie
+            ,p_Rvcii.Nro_Nf
+            ,p_Rvcii.Nro_Item
+            ,p_Rvcii.Cod_Imposto
+            ,p_Rvcii.Dm_Tipo
+            ,'PERCENT_DIFER'
+            ,Round(Nvl(R8.Percent_Difer_Cbs, 0) * 10000));
+        Exception
+          When Dup_Val_On_Index Then
+            Null;
+          When Others Then
+            --
+            g_Retcode   := 1;
+            g_Erro      := Nvl(g_Erro, 0) + 1;
+            l_Desc_Erro := 'Vw_Csf_Imp_Itemnf_Ff_p (PERCENT_DIFER) - ' ||
+                           'Cpf_Cnpj_Emit: ' || p_Rvcii.Cpf_Cnpj_Emit ||
+                           ', Dm_Ind_Emit: ' || p_Rvcii.Dm_Ind_Emit ||
+                           ', Cod_Mod: ' || p_Rvcii.Cod_Mod || ', Serie: ' ||
+                           p_Rvcii.Serie || ', Nro_Nf: ' || p_Rvcii.Nro_Nf ||
+                           ', Nro_Item: ' || p_Rvcii.Nro_Item || ', Erro: ' ||
+                           Sqlerrm;
+            g_Erro_Msg  := l_Desc_Erro;
+            --
+            Fnd_File.Put_Line(Fnd_File.Log, l_Desc_Erro);
+            --
+        End;
+        ---
+        Begin
+          Insert Into Vw_Csf_Imp_Itemnf_Ff
+            (Cpf_Cnpj_Emit
+            ,Dm_Ind_Emit
+            ,Dm_Ind_Oper
+            ,Cod_Part
+            ,Cod_Mod
+            ,Serie
+            ,Nro_Nf
+            ,Nro_Item
+            ,Cod_Imposto
+            ,Dm_Tipo
+            ,Atributo
+            ,Valor)
+          Values
+            (p_Rvcii.Cpf_Cnpj_Emit
+            ,p_Rvcii.Dm_Ind_Emit
+            ,p_Rvcii.Dm_Ind_Oper
+            ,p_Rvcii.Cod_Part
+            ,p_Rvcii.Cod_Mod
+            ,p_Rvcii.Serie
+            ,p_Rvcii.Nro_Nf
+            ,p_Rvcii.Nro_Item
+            ,p_Rvcii.Cod_Imposto
+            ,p_Rvcii.Dm_Tipo
+            ,'VL_IMP_DIFER_UF'
+            ,Round(Nvl(R8.Vl_Imp_Difer_Cbs, 0) * 100));
+        Exception
+          When Dup_Val_On_Index Then
+            Null;
+          When Others Then
+            --
+            g_Retcode   := 1;
+            g_Erro      := Nvl(g_Erro, 0) + 1;
+            l_Desc_Erro := 'Vw_Csf_Imp_Itemnf_Ff_p (VL_IMP_DIFER_UF) - ' ||
+                           'Cpf_Cnpj_Emit: ' || p_Rvcii.Cpf_Cnpj_Emit ||
+                           ', Dm_Ind_Emit: ' || p_Rvcii.Dm_Ind_Emit ||
+                           ', Cod_Mod: ' || p_Rvcii.Cod_Mod || ', Serie: ' ||
+                           p_Rvcii.Serie || ', Nro_Nf: ' || p_Rvcii.Nro_Nf ||
+                           ', Nro_Item: ' || p_Rvcii.Nro_Item || ', Erro: ' ||
+                           Sqlerrm;
+            g_Erro_Msg  := l_Desc_Erro;
+            --
+            Fnd_File.Put_Line(Fnd_File.Log, l_Desc_Erro);
+            --
+        End;
+        ---
+      End If;
+      ---CBS: reducao de aliquota (CST 200/510/515) e aliquota efetiva = aliquota aplicavel * (1 - percentual de reducao / 100)
+      If R8.Per_Redaliq_Cbs Is Not Null
+      Then
+        Begin
+          Insert Into Vw_Csf_Imp_Itemnf_Ff
+            (Cpf_Cnpj_Emit
+            ,Dm_Ind_Emit
+            ,Dm_Ind_Oper
+            ,Cod_Part
+            ,Cod_Mod
+            ,Serie
+            ,Nro_Nf
+            ,Nro_Item
+            ,Cod_Imposto
+            ,Dm_Tipo
+            ,Atributo
+            ,Valor)
+          Values
+            (p_Rvcii.Cpf_Cnpj_Emit
+            ,p_Rvcii.Dm_Ind_Emit
+            ,p_Rvcii.Dm_Ind_Oper
+            ,p_Rvcii.Cod_Part
+            ,p_Rvcii.Cod_Mod
+            ,p_Rvcii.Serie
+            ,p_Rvcii.Nro_Nf
+            ,p_Rvcii.Nro_Item
+            ,p_Rvcii.Cod_Imposto
+            ,p_Rvcii.Dm_Tipo
+            ,'PER_REDALIQ_IBS_CBS'
+            ,Round(Nvl(R8.Per_Redaliq_Cbs, 0) * 10000));
+        Exception
+          When Dup_Val_On_Index Then
+            Null;
+          When Others Then
+            --
+            g_Retcode   := 1;
+            g_Erro      := Nvl(g_Erro, 0) + 1;
+            l_Desc_Erro := 'Vw_Csf_Imp_Itemnf_Ff_p (PER_REDALIQ_IBS_CBS) - ' ||
+                           'Cpf_Cnpj_Emit: ' || p_Rvcii.Cpf_Cnpj_Emit ||
+                           ', Dm_Ind_Emit: ' || p_Rvcii.Dm_Ind_Emit ||
+                           ', Cod_Mod: ' || p_Rvcii.Cod_Mod || ', Serie: ' ||
+                           p_Rvcii.Serie || ', Nro_Nf: ' || p_Rvcii.Nro_Nf ||
+                           ', Nro_Item: ' || p_Rvcii.Nro_Item || ', Erro: ' ||
+                           Sqlerrm;
+            g_Erro_Msg  := l_Desc_Erro;
+            --
+            Fnd_File.Put_Line(Fnd_File.Log, l_Desc_Erro);
+            --
+        End;
+        ---
+        Begin
+          Insert Into Vw_Csf_Imp_Itemnf_Ff
+            (Cpf_Cnpj_Emit
+            ,Dm_Ind_Emit
+            ,Dm_Ind_Oper
+            ,Cod_Part
+            ,Cod_Mod
+            ,Serie
+            ,Nro_Nf
+            ,Nro_Item
+            ,Cod_Imposto
+            ,Dm_Tipo
+            ,Atributo
+            ,Valor)
+          Values
+            (p_Rvcii.Cpf_Cnpj_Emit
+            ,p_Rvcii.Dm_Ind_Emit
+            ,p_Rvcii.Dm_Ind_Oper
+            ,p_Rvcii.Cod_Part
+            ,p_Rvcii.Cod_Mod
+            ,p_Rvcii.Serie
+            ,p_Rvcii.Nro_Nf
+            ,p_Rvcii.Nro_Item
+            ,p_Rvcii.Cod_Imposto
+            ,p_Rvcii.Dm_Tipo
+            ,'ALIQ_EFET_IBS_CBS'
+            ,Round(Nvl(R8.Aliq_Apli_Cbs, 0) * (1 - (Nvl(R8.Per_Redaliq_Cbs, 0) / 100)) * 10000));
+        Exception
+          When Dup_Val_On_Index Then
+            Null;
+          When Others Then
+            --
+            g_Retcode   := 1;
+            g_Erro      := Nvl(g_Erro, 0) + 1;
+            l_Desc_Erro := 'Vw_Csf_Imp_Itemnf_Ff_p (ALIQ_EFET_IBS_CBS) - ' ||
+                           'Cpf_Cnpj_Emit: ' || p_Rvcii.Cpf_Cnpj_Emit ||
+                           ', Dm_Ind_Emit: ' || p_Rvcii.Dm_Ind_Emit ||
+                           ', Cod_Mod: ' || p_Rvcii.Cod_Mod || ', Serie: ' ||
+                           p_Rvcii.Serie || ', Nro_Nf: ' || p_Rvcii.Nro_Nf ||
+                           ', Nro_Item: ' || p_Rvcii.Nro_Item || ', Erro: ' ||
+                           Sqlerrm;
+            g_Erro_Msg  := l_Desc_Erro;
+            --
+            Fnd_File.Put_Line(Fnd_File.Log, l_Desc_Erro);
+            --
+        End;
+        ---
+      End If;
     End If;
     --
   Exception
@@ -13949,7 +14622,7 @@ CREATE OR REPLACE Package Body Xxisv_Csf_Nfe_Pkg As
   --------------------------------------------------------------------------
   Function Get_Nfe_Version_f Return Varchar2 Is
   Begin
-    Return('Xxisv_Csf_Nfe_Pkg V88');
+    Return('Xxisv_Csf_Nfe_Pkg V87');
   End;
 
   ---
