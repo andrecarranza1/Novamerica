@@ -10114,6 +10114,7 @@ Create Or Replace Package Body Xxisv_Csf_Nfe_Pkg As
                      ,Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%CBS%' Then Abs(T.Taxable_Amt) End)
                      ,Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%IBS%MUN%' Then Abs(T.Taxable_Amt) End)) As Vl_Base_Calc
             ,Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%IBS%MUN%' Then T.Aliquota_Aplicavel End) As Aliq_Apli_Ibsmun
+            ,Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%IBS%MUN%' Then Abs(T.Tax_Rate) End) As Aliq_Efet_Ibsmun
             ,Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%IBS%MUN%' And T.Cst_Normalizado In ('200', '510', '515') Then T.Per_Redaliq End) As Per_Redaliq_Ibs_Mun
             ,Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%IBS%MUN%' And T.Ind_Diferimento = 1 Then T.Percent_Difer End) As Percent_Difer_Ibsmun
             ,Max(Case When Upper(T.Arvt_Global_Attribute10) Like '%IBS%MUN%' And T.Ind_Diferimento = 1 Then Round(T.Tax_Amount * (T.Percent_Difer / 100), 2) End) As Vl_Imp_Difer_Ibs_Mun
@@ -11467,6 +11468,53 @@ Create Or Replace Package Body Xxisv_Csf_Nfe_Pkg As
             g_Retcode   := 1;
             g_Erro      := Nvl(g_Erro, 0) + 1;
             l_Desc_Erro := 'Vw_Csf_Imp_Itemnf_Ff_p (ALIQ_APLIC_MUN) - ' ||
+                           'Cpf_Cnpj_Emit: ' || p_Rvcii.Cpf_Cnpj_Emit ||
+                           ', Dm_Ind_Emit: ' || p_Rvcii.Dm_Ind_Emit ||
+                           ', Cod_Mod: ' || p_Rvcii.Cod_Mod || ', Serie: ' ||
+                           p_Rvcii.Serie || ', Nro_Nf: ' || p_Rvcii.Nro_Nf ||
+                           ', Nro_Item: ' || p_Rvcii.Nro_Item || ', Erro: ' ||
+                           Sqlerrm;
+            g_Erro_Msg  := l_Desc_Erro;
+            --
+            Fnd_File.Put_Line(Fnd_File.Log, l_Desc_Erro);
+            --
+        End;
+        ---
+        Begin
+          Insert Into Vw_Csf_Imp_Itemnf_Ff
+            (Cpf_Cnpj_Emit
+            ,Dm_Ind_Emit
+            ,Dm_Ind_Oper
+            ,Cod_Part
+            ,Cod_Mod
+            ,Serie
+            ,Nro_Nf
+            ,Nro_Item
+            ,Cod_Imposto
+            ,Dm_Tipo
+            ,Atributo
+            ,Valor)
+          Values
+            (p_Rvcii.Cpf_Cnpj_Emit
+            ,p_Rvcii.Dm_Ind_Emit
+            ,p_Rvcii.Dm_Ind_Oper
+            ,p_Rvcii.Cod_Part
+            ,p_Rvcii.Cod_Mod
+            ,p_Rvcii.Serie
+            ,p_Rvcii.Nro_Nf
+            ,p_Rvcii.Nro_Item
+            ,p_Rvcii.Cod_Imposto
+            ,p_Rvcii.Dm_Tipo
+            ,'ALIQ_EFET_IBS_MUN'
+            ,Round(Nvl(R8.Aliq_Efet_Ibsmun, 0) * 10000));
+        Exception
+          When Dup_Val_On_Index Then
+            Null;
+          When Others Then
+            --
+            g_Retcode   := 1;
+            g_Erro      := Nvl(g_Erro, 0) + 1;
+            l_Desc_Erro := 'Vw_Csf_Imp_Itemnf_Ff_p (ALIQ_EFET_IBS_MUN) - ' ||
                            'Cpf_Cnpj_Emit: ' || p_Rvcii.Cpf_Cnpj_Emit ||
                            ', Dm_Ind_Emit: ' || p_Rvcii.Dm_Ind_Emit ||
                            ', Cod_Mod: ' || p_Rvcii.Cod_Mod || ', Serie: ' ||
